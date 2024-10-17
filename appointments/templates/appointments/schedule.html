@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agendar Horário</title>
+    <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css' rel='stylesheet' />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js'></script>
+    
+    <style>
+        #calendar {
+            max-width: 900px;
+            margin: 40px auto;
+        }
+        #time-slot-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border: 1px solid #ccc;
+            padding: 20px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        }
+        #time-slot-modal ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        #time-slot-modal li {
+            cursor: pointer;
+            padding: 5px;
+            border: 1px solid #ddd;
+            margin: 5px 0;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        #time-slot-modal li:hover {
+            background-color: #f0f0f0;
+        }
+        #modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+    </style>
+</head>
+<body>
+    <h1>Agendar um Horário</h1>
+    {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% endif %}
+    
+    <div id='calendar'></div>
+
+    <div id="modal-overlay"></div>
+    <div id="time-slot-modal">
+        <h2>Escolha um Horário</h2>
+        <ul id="available-time-slots"></ul>
+        <button id="close-modal">Fechar</button>
+    </div>
+
+    <form method="POST" action="{% url 'schedule_appointment' %}">
+    {% csrf_token %}
+    {{ form.as_p }}  <!-- This renders the form fields -->
+    <button type="submit">Agendar</button>
+</form>
+
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var calendarEl = document.getElementById('calendar');
+            var calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                },
+                events: function(fetchInfo, successCallback, failureCallback) {
+                    $.ajax({
+                        url: "{% url 'get_events' %}",
+                        method: "GET",
+                        success: function(data) {
+                            successCallback(data);
+                        },
+                        error: function() {
+                            failureCallback();
+                        }
+                    });
+                },
+                selectable: true,
+                select: function(selectionInfo) {
+                    var selectedDate = selectionInfo.startStr;
+                    fetchAvailableTimeSlots(selectedDate);
+                },
+                eventClick: function(info) {
+                    alert('Agendamento: ' + info.event.title);
+                }
+            });
+
+            calendar.render();
+
+            function fetchAvailableTimeSlots(date) {
+                $.ajax({
+                    url: "{% url 'get_available_time_slots' %}",
+                    type: "GET",
+                    data: {
+                        'date': date
+                    },
+                    success: function(response) {
+                        showAvailableTimeSlots(response.slots);
+                    },
+                    error: function(xhr, errmsg, err) {
+                        console.error('Erro ao buscar horários: ', errmsg);
+                        alert('Erro ao buscar horários disponíveis. Tente novamente mais tarde.');
+                    }
+                });
+            }
+
+            function showAvailableTimeSlots(slots) {
+                const modal = $('#time-slot-modal');
+                const overlay = $('#modal-overlay');
+                const timeSlotsList = $('#available-time-slots');
+                timeSlotsList.empty();
+
+                if (slots.length > 0) {
+                    slots.forEach(slot => {
+                        const listItem = $('<li></li>').text(slot.time);
+                        listItem.on('click', function() {
+                            bookAppointment(slot.time);
+                            modal.hide();
+                            overlay.hide();
+                        });
+                        timeSlotsList.append(listItem);
+                    });
+                    modal.show();
+                    overlay.show();
+                } else {
+                    alert('Não há horários disponíveis para este dia.');
+                }
+            }
+
+            function bookAppointment(time) {
+                const title = prompt('Digite o nome do cliente para agendar:');
+                if (title) {
+                    $.ajax({
+                        url: "{% url 'schedule_appointment' %}",
+                        type: "POST",
+                        data: {
+                            'date': time,
+                            'title': title,
+                            'csrfmiddlewaretoken': getCookie('csrftoken')
+                        },
+                        success: function(response) {
+                            if (response.status === 'success') {
+                                alert('Agendamento realizado com sucesso para: ' + response.date);
+                                calendar.refetchEvents();
+                            } else {
+                                alert('Erro: ' + response.message);
+                            }
+                        },
+                        error: function(xhr, errmsg, err) {
+                            alert('Erro ao agendar: ' + errmsg);
+                        }
+                    });
+                }
+            }
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+
+            $('#close-modal').on('click', function() {
+                $('#time-slot-modal').hide();
+                $('#modal-overlay').hide();
+            });
+
+            $('#modal-overlay').on('click', function() {
+                $('#time-slot-modal').hide();
+                $(this).hide();
+            });
+        });
+    </script>
+</body>
+</html>
